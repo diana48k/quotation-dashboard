@@ -29,6 +29,8 @@ export type DashboardRow = {
   lastUpdatedAt: string | null;
 };
 
+export type DashboardField = Exclude<keyof DashboardRow, "rowNumber" | "createdAt" | "closedAt" | "lastUpdatedAt">;
+
 export type SheetPayload = {
   spreadsheetId: string;
   sheetName: string;
@@ -36,11 +38,13 @@ export type SheetPayload = {
   updatedAt: string;
   source: "published-csv" | "google-sheets" | "sample";
   headers: string[];
+  availableFields: DashboardField[];
   rows: DashboardRow[];
 };
 
 export type FilterState = {
   query: string;
+  company: string;
   status: string;
   category: string;
   owner: string;

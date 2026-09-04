@@ -1,4 +1,4 @@
-import type { DashboardRow, FilterState, SortState } from "@/lib/types";
+import type { DashboardField, DashboardRow, FilterState, SortState } from "@/lib/types";
 import { formatThaiMonthShort, toMonthKey } from "@/lib/format";
 
 type Deal = {
@@ -8,7 +8,13 @@ type Deal = {
   value: number;
 };
 
-export function buildDashboardMetrics(rows: DashboardRow[]) {
+export type AttentionItem = {
+  row: DashboardRow;
+  reason: string;
+  severity: "attention" | "risk";
+};
+
+export function buildDashboardMetrics(rows: DashboardRow[], availableFields: DashboardField[] = []) {
   const deals = groupDeals(rows);
   const statusCounts = countBy(rows, (row) => normalizeStatus(row.status));
   const totalValue = sumDeals(deals);
@@ -16,7 +22,9 @@ export function buildDashboardMetrics(rows: DashboardRow[]) {
   const closedWon = rows.filter((row) => isClosedWon(row.status));
   const closedLost = rows.filter((row) => isClosedLost(row.status));
   const openRows = rows.filter((row) => isOpenStatus(row.status));
-  const attentionRows = getAttentionRows(rows);
+  const attentionItems = getAttentionItems(rows, availableFields);
+  const comparisons = buildMonthlyComparisons(rows, availableFields);
+  const closedCount = closedWon.length + closedLost.length;
 
   return {
     totalItems: rows.length,
@@ -26,14 +34,17 @@ export function buildDashboardMetrics(rows: DashboardRow[]) {
     closedWonValue: sumDeals(groupDeals(closedWon)),
     closedLostCount: closedLost.length,
     openCount: openRows.length,
-    attentionCount: attentionRows.length,
+    attentionCount: attentionItems.length,
+    winRate: closedCount > 0 ? (closedWon.length / closedCount) * 100 : 0,
     statusCounts: toChartRows(statusCounts),
     categoryCounts: buildCategoryValues(deals, totalValue),
+    statusValues: buildStatusValues(deals, totalValue),
     monthlyTrend: buildMonthlyTrend(deals),
+    comparisons,
     latestRows: [...rows]
-      .sort((a, b) => Number(new Date(b.lastUpdatedAt || b.closedAt || b.createdAt || 0)) - Number(new Date(a.lastUpdatedAt || a.closedAt || a.createdAt || 0)))
+      .sort((a, b) => Number(new Date(b.lastUpdatedAt || b.createdAt || b.closedAt || 0)) - Number(new Date(a.lastUpdatedAt || a.createdAt || a.closedAt || 0)))
       .slice(0, 10),
-    attentionRows
+    attentionItems
   };
 }
 
@@ -61,6 +72,7 @@ export function applyFilters(rows: DashboardRow[], filters: FilterState): Dashbo
 
     return (
       (!query || haystack.includes(query)) &&
+      (!filters.company || row.company === filters.company) &&
       (!filters.status || row.status === filters.status) &&
       (!filters.category || row.category === filters.category) &&
       (!filters.owner || row.owner === filters.owner) &&
@@ -141,6 +153,22 @@ function buildCategoryValues(deals: Deal[], totalValue: number) {
   ];
 }
 
+function buildStatusValues(deals: Deal[], totalValue: number) {
+  const values = new Map<string, number>();
+  deals.forEach((deal) => {
+    const status = normalizeStatus(deal.representative.status);
+    values.set(status, (values.get(status) ?? 0) + deal.value);
+  });
+
+  return [...values.entries()]
+    .map(([name, value]) => ({
+      name,
+      value,
+      percentage: totalValue > 0 ? (value / totalValue) * 100 : 0
+    }))
+    .sort((a, b) => b.value - a.value);
+}
+
 function buildMonthlyTrend(deals: Deal[]) {
   const buckets = new Map<string, { month: string; monthLabel: string; value: number; count: number }>();
   deals.forEach((deal) => {
@@ -153,21 +181,83 @@ function buildMonthlyTrend(deals: Deal[]) {
   });
   return [...buckets.values()]
     .sort((a, b) => a.month.localeCompare(b.month))
-    .slice(-12);
+    .slice(-6);
 }
 
-function getAttentionRows(rows: DashboardRow[]) {
+function getAttentionItems(rows: DashboardRow[], availableFields: DashboardField[]): AttentionItem[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const tracksWorkOrder = availableFields.includes("workOrder");
 
   return rows
-    .filter((row) => {
+    .map((row): AttentionItem | null => {
       const isOverdue = row.closedAt && new Date(`${row.closedAt}T00:00:00`) < today && isOpenStatus(row.status);
-      const missingWorkOrder = !row.workOrder && !isClosedLost(row.status);
-      const lowQuantity = row.quantity > 0 && row.quantity < 1;
-      return Boolean(isOverdue || missingWorkOrder || lowQuantity || isOpenStatus(row.status));
+      const missingWorkOrder = tracksWorkOrder && !row.workOrder && !isClosedLost(row.status);
+
+      if (isOverdue) return { row, reason: `เกินกำหนดปิดการขาย ${formatThaiDateForAlert(row.closedAt)}`, severity: "risk" };
+      if (missingWorkOrder) return { row, reason: "ยังไม่มีเลข WorkOrder", severity: "attention" };
+      if (isOpenStatus(row.status)) return { row, reason: "ยังอยู่ระหว่างพิจารณา", severity: "attention" };
+      return null;
     })
-    .slice(0, 12);
+    .filter((item): item is AttentionItem => item !== null)
+    .sort((a, b) => Number(a.severity === "risk") - Number(b.severity === "risk"))
+    .reverse();
+}
+
+function buildMonthlyComparisons(rows: DashboardRow[], availableFields: DashboardField[]) {
+  const months = rows
+    .map((row) => toMonthKey(row.createdAt))
+    .filter((month) => month !== "ไม่ระบุ")
+    .sort();
+  const currentMonth = months.at(-1) ?? null;
+  const previousMonth = currentMonth ? previousMonthKey(currentMonth) : null;
+  const current = monthlySnapshot(rows.filter((row) => toMonthKey(row.createdAt) === currentMonth), availableFields);
+  const previous = monthlySnapshot(rows.filter((row) => toMonthKey(row.createdAt) === previousMonth), availableFields);
+
+  return {
+    currentMonth,
+    previousMonth,
+    currentLabel: currentMonth ? formatThaiMonthShort(currentMonth) : "-",
+    previousLabel: previousMonth ? formatThaiMonthShort(previousMonth) : "-",
+    totalItems: percentageChange(current.totalItems, previous.totalItems),
+    closedWonCount: percentageChange(current.closedWonCount, previous.closedWonCount),
+    openCount: percentageChange(current.openCount, previous.openCount),
+    closedLostCount: percentageChange(current.closedLostCount, previous.closedLostCount),
+    totalValue: percentageChange(current.totalValue, previous.totalValue),
+    attentionCount: percentageChange(current.attentionCount, previous.attentionCount)
+  };
+}
+
+function monthlySnapshot(rows: DashboardRow[], availableFields: DashboardField[]) {
+  const won = rows.filter((row) => isClosedWon(row.status)).length;
+  const lost = rows.filter((row) => isClosedLost(row.status)).length;
+  const open = rows.filter((row) => isOpenStatus(row.status)).length;
+  return {
+    totalItems: rows.length,
+    closedWonCount: won,
+    openCount: open,
+    closedLostCount: lost,
+    totalValue: sumDeals(groupDeals(rows)),
+    attentionCount: getAttentionItems(rows, availableFields).length
+  };
+}
+
+function previousMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 2, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function percentageChange(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
+function formatThaiDateForAlert(value: string | null) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "2-digit" }).format(
+    new Date(`${value}T00:00:00`)
+  );
 }
 
 function countBy(rows: DashboardRow[], getKey: (row: DashboardRow) => string) {

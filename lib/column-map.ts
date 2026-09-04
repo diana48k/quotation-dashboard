@@ -1,4 +1,4 @@
-import type { DashboardRow } from "@/lib/types";
+import type { DashboardField, DashboardRow } from "@/lib/types";
 import { parseMoney, parseNumber, parseThaiDate } from "@/lib/format";
 
 const columnAliases = {
@@ -22,9 +22,9 @@ const columnAliases = {
   lastUpdated: ["วันที่อัปเดตล่าสุด", "Last Updated", "Updated At"]
 } as const;
 
-type Field = keyof typeof columnAliases;
+export type MappedField = keyof typeof columnAliases;
 
-export function normalizeRows(values: string[][]): { headers: string[]; rows: DashboardRow[] } {
+export function normalizeRows(values: string[][]): { headers: string[]; availableFields: DashboardField[]; rows: DashboardRow[] } {
   const headers = (values[0] ?? []).map((header) => normalizeHeader(header));
   const index = buildHeaderIndex(headers);
 
@@ -33,11 +33,11 @@ export function normalizeRows(values: string[][]): { headers: string[]; rows: Da
     .map((cells, offset) => toDashboardRow(cells, offset + 2, index))
     .filter((row) => Object.values(row).some((value) => value !== "" && value !== 0 && value !== null));
 
-  return { headers, rows };
+  return { headers, availableFields: [...index.keys()], rows };
 }
 
-function toDashboardRow(cells: string[], rowNumber: number, index: Map<Field, number>): DashboardRow {
-  const get = (field: Field) => {
+function toDashboardRow(cells: string[], rowNumber: number, index: Map<MappedField, number>): DashboardRow {
+  const get = (field: MappedField) => {
     const column = index.get(field);
     return column === undefined ? "" : String(cells[column] ?? "").trim();
   };
@@ -46,7 +46,7 @@ function toDashboardRow(cells: string[], rowNumber: number, index: Map<Field, nu
   const company = get("company");
   const createdDate = get("createdDate");
   const closedDate = get("closedDate");
-  const lastUpdated = get("lastUpdated") || closedDate || createdDate;
+  const lastUpdated = get("lastUpdated") || createdDate || closedDate;
 
   return {
     rowNumber,
@@ -74,11 +74,11 @@ function toDashboardRow(cells: string[], rowNumber: number, index: Map<Field, nu
   };
 }
 
-function buildHeaderIndex(headers: string[]): Map<Field, number> {
+function buildHeaderIndex(headers: string[]): Map<MappedField, number> {
   const exactHeaders = headers.map((header) => normalizeComparable(header));
-  const index = new Map<Field, number>();
+  const index = new Map<MappedField, number>();
 
-  (Object.keys(columnAliases) as Field[]).forEach((field) => {
+  (Object.keys(columnAliases) as MappedField[]).forEach((field) => {
     const aliases = columnAliases[field].map((alias) => normalizeComparable(alias));
     const column = exactHeaders.findIndex((header) => aliases.includes(header));
     if (column >= 0) index.set(field, column);

@@ -85,7 +85,7 @@ const sampleValues = [
 ];
 
 export function getSamplePayload(): SheetPayload {
-  const { headers, rows } = normalizeRows(sampleValues);
+  const { headers, availableFields, rows } = normalizeRows(sampleValues);
   return {
     spreadsheetId: "sample",
     sheetName: "โอกาสทางการขาย TS",
@@ -93,6 +93,7 @@ export function getSamplePayload(): SheetPayload {
     updatedAt: new Date().toISOString(),
     source: "sample",
     headers,
+    availableFields,
     rows
   };
 }

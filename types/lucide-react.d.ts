@@ -10,11 +10,15 @@ declare module "lucide-react" {
   export type LucideIcon = ComponentType<LucideProps>;
 
   export const AlertTriangle: LucideIcon;
+  export const ArrowDownRight: LucideIcon;
   export const ArrowDown: LucideIcon;
   export const ArrowUp: LucideIcon;
+  export const ArrowUpRight: LucideIcon;
   export const BarChart3: LucideIcon;
   export const Bell: LucideIcon;
   export const BriefcaseBusiness: LucideIcon;
+  export const Building2: LucideIcon;
+  export const CalendarDays: LucideIcon;
   export const CheckCircle2: LucideIcon;
   export const ChevronLeft: LucideIcon;
   export const ChevronRight: LucideIcon;
@@ -31,6 +35,7 @@ declare module "lucide-react" {
   export const LineChart: LucideIcon;
   export const Loader2: LucideIcon;
   export const Menu: LucideIcon;
+  export const MoreVertical: LucideIcon;
   export const PanelLeftClose: LucideIcon;
   export const PanelLeftOpen: LucideIcon;
   export const Printer: LucideIcon;

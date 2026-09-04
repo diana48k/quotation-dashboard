@@ -24,7 +24,7 @@ export async function fetchSheetPayload(): Promise<SheetPayload> {
 
     const csv = await response.text();
     const values = parseCsv(csv);
-    const { headers, rows } = normalizeRows(values);
+    const { headers, availableFields, rows } = normalizeRows(values);
 
     if (headers.length === 0 || rows.length === 0) {
       throw new Error("Published CSV ไม่มีหัวคอลัมน์หรือไม่มีข้อมูล");
@@ -37,6 +37,7 @@ export async function fetchSheetPayload(): Promise<SheetPayload> {
       updatedAt: new Date().toISOString(),
       source: "published-csv",
       headers,
+      availableFields,
       rows
     };
   } catch (error) {
