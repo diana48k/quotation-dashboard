@@ -1,4 +1,9 @@
-import type { DashboardField, DashboardRow, FilterState, SortState } from "@/lib/types";
+import type {
+  DashboardField,
+  DashboardRow,
+  FilterState,
+  SortState,
+} from "@/lib/types";
 import { formatThaiMonthShort, toMonthKey } from "@/lib/format";
 
 type Deal = {
@@ -14,8 +19,15 @@ export type AttentionItem = {
   severity: "attention" | "risk";
 };
 
-export function buildDashboardMetrics(rows: DashboardRow[], availableFields: DashboardField[] = []) {
-  const deals = groupDeals(rows);
+export function buildDashboardMetrics(
+  rows: DashboardRow[],
+  availableFields: DashboardField[] = [],
+  allRows: DashboardRow[] = rows,
+) {
+  const selected = new Set(rows.map((row) => row.rowNumber));
+  const deals = groupDeals(allRows).filter((deal) =>
+    deal.rows.some((row) => selected.has(row.rowNumber)),
+  );
   const statusCounts = countBy(rows, (row) => normalizeStatus(row.status));
   const totalValue = sumDeals(deals);
   const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
@@ -31,7 +43,9 @@ export function buildDashboardMetrics(rows: DashboardRow[], availableFields: Das
     totalQuantity,
     totalValue,
     closedWonCount: closedWon.length,
-    closedWonValue: sumDeals(groupDeals(closedWon)),
+    closedWonValue: sumDeals(
+      deals.filter((deal) => deal.rows.some((row) => isClosedWon(row.status))),
+    ),
     closedLostCount: closedLost.length,
     openCount: openRows.length,
     attentionCount: attentionItems.length,
@@ -39,19 +53,64 @@ export function buildDashboardMetrics(rows: DashboardRow[], availableFields: Das
     statusCounts: toChartRows(statusCounts),
     categoryCounts: buildCategoryValues(deals, totalValue),
     statusValues: buildStatusValues(deals, totalValue),
+    topCompanies: [
+      ...deals.reduce((map, deal) => {
+        const name = deal.representative.company || "ไม่ระบุบริษัท";
+        map.set(name, (map.get(name) || 0) + deal.value);
+        return map;
+      }, new Map<string, number>()),
+    ]
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8),
+    lossReasons: toChartRows(
+      countBy(
+        rows.filter((row) => isClosedLost(row.status)),
+        (row) => row.lossReason || "ไม่ระบุเหตุผล",
+      ),
+    ),
     monthlyTrend: buildMonthlyTrend(deals),
     comparisons,
     latestRows: [...rows]
-      .sort((a, b) => Number(new Date(b.lastUpdatedAt || b.createdAt || b.closedAt || 0)) - Number(new Date(a.lastUpdatedAt || a.createdAt || a.closedAt || 0)))
+      .sort(
+        (a, b) =>
+          Number(new Date(b.lastUpdatedAt || b.createdAt || b.closedAt || 0)) -
+          Number(new Date(a.lastUpdatedAt || a.createdAt || a.closedAt || 0)),
+      )
       .slice(0, 10),
-    attentionItems
+    attentionItems,
   };
 }
 
-export function applyFilters(rows: DashboardRow[], filters: FilterState): DashboardRow[] {
+export function applyFilters(
+  rows: DashboardRow[],
+  filters: FilterState,
+): DashboardRow[] {
+  const grouped = groupDeals(rows);
+  const conflictRows = new Set(
+    grouped
+      .filter(
+        (deal) => new Set(deal.rows.map((row) => row.totalValue)).size > 1,
+      )
+      .flatMap((deal) => deal.rows.map((row) => row.rowNumber)),
+  );
+  const mixedStatuses = new Set(
+    grouped
+      .filter((deal) => new Set(deal.rows.map((row) => row.status)).size > 1)
+      .flatMap((deal) => deal.rows.map((row) => row.rowNumber)),
+  );
+  const mixedCategories = new Set(
+    grouped
+      .filter((deal) => new Set(deal.rows.map((row) => row.category)).size > 1)
+      .flatMap((deal) => deal.rows.map((row) => row.rowNumber)),
+  );
   const query = filters.query.trim().toLocaleLowerCase("th-TH");
-  const from = filters.dateFrom ? new Date(`${filters.dateFrom}T00:00:00`).getTime() : null;
-  const to = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59`).getTime() : null;
+  const from = filters.dateFrom
+    ? new Date(`${filters.dateFrom}T00:00:00`).getTime()
+    : null;
+  const to = filters.dateTo
+    ? new Date(`${filters.dateTo}T23:59:59`).getTime()
+    : null;
 
   return rows.filter((row) => {
     const haystack = [
@@ -64,25 +123,43 @@ export function applyFilters(rows: DashboardRow[], filters: FilterState): Dashbo
       row.payment,
       row.status,
       row.owner,
-      row.note
+      row.note,
     ]
       .join(" ")
       .toLocaleLowerCase("th-TH");
-    const dateValue = row.createdAt ? new Date(`${row.createdAt}T12:00:00`).getTime() : null;
+    const dateValue = row.createdAt
+      ? new Date(`${row.createdAt}T12:00:00`).getTime()
+      : null;
 
     return (
       (!query || haystack.includes(query)) &&
-      (!filters.company || row.company === filters.company) &&
-      (!filters.status || row.status === filters.status) &&
-      (!filters.category || row.category === filters.category) &&
+      (!filters.company ||
+        (row.company || "ไม่ระบุบริษัท") === filters.company) &&
+      (!filters.status ||
+        (filters.status === "หลายสถานะ"
+          ? mixedStatuses.has(row.rowNumber)
+          : row.status === filters.status)) &&
+      (!filters.category ||
+        (filters.category === "หลายหมวดหมู่"
+          ? mixedCategories.has(row.rowNumber)
+          : row.category === filters.category)) &&
       (!filters.owner || row.owner === filters.owner) &&
+      (!filters.lossReason ||
+        (row.lossReason || "ไม่ระบุเหตุผล") === filters.lossReason) &&
+      (!filters.attention ||
+        (filters.attention === "quality"
+          ? !row.createdAt || !row.company || conflictRows.has(row.rowNumber)
+          : matchesAttention(row, filters.attention, rows))) &&
       (from === null || (dateValue !== null && dateValue >= from)) &&
       (to === null || (dateValue !== null && dateValue <= to))
     );
   });
 }
 
-export function sortRows(rows: DashboardRow[], sort: SortState): DashboardRow[] {
+export function sortRows(
+  rows: DashboardRow[],
+  sort: SortState,
+): DashboardRow[] {
   return [...rows].sort((a, b) => {
     const aValue = sortValue(a, sort.key);
     const bValue = sortValue(b, sort.key);
@@ -93,13 +170,18 @@ export function sortRows(rows: DashboardRow[], sort: SortState): DashboardRow[] 
   });
 }
 
-export function uniqueOptions(rows: DashboardRow[], key: keyof DashboardRow): string[] {
-  return [...new Set(rows.map((row) => String(row[key] || "").trim()).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, "th")
-  );
+export function uniqueOptions(
+  rows: DashboardRow[],
+  key: keyof DashboardRow,
+): string[] {
+  return [
+    ...new Set(
+      rows.map((row) => String(row[key] || "").trim()).filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b, "th"));
 }
 
-function groupDeals(rows: DashboardRow[]): Deal[] {
+export function groupDeals(rows: DashboardRow[]): Deal[] {
   const groups = new Map<string, DashboardRow[]>();
   rows.forEach((row) => {
     const key = dealKey(row);
@@ -110,7 +192,7 @@ function groupDeals(rows: DashboardRow[]): Deal[] {
     key,
     rows: dealRows,
     representative: dealRows[0],
-    value: Math.max(0, ...dealRows.map((row) => row.totalValue))
+    value: Math.max(0, ...dealRows.map((row) => row.totalValue)),
   }));
 }
 
@@ -118,9 +200,9 @@ function dealKey(row: DashboardRow): string {
   const workOrder = normalizeKeyPart(row.workOrder);
   if (workOrder) return `wo:${workOrder}`;
 
-  const company = normalizeKeyPart(row.company) || "ไม่ระบุบริษัท";
+  const company = normalizeKeyPart(row.company);
   const date = row.createdAt || normalizeKeyPart(row.createdDate);
-  if (date) return `company-date:${company}|${date}`;
+  if (company && date) return `company-date:${company}|${date}`;
 
   return `row:${row.rowNumber}`;
 }
@@ -128,7 +210,10 @@ function dealKey(row: DashboardRow): string {
 function buildCategoryValues(deals: Deal[], totalValue: number) {
   const values = new Map<string, number>();
   deals.forEach((deal) => {
-    const category = deal.representative.category || "ไม่ระบุ";
+    const categories = new Set(
+      deal.rows.map((row) => row.category || "ไม่ระบุ"),
+    );
+    const category = categories.size > 1 ? "หลายหมวดหมู่" : [...categories][0];
     values.set(category, (values.get(category) ?? 0) + deal.value);
   });
 
@@ -136,27 +221,20 @@ function buildCategoryValues(deals: Deal[], totalValue: number) {
     .map(([name, value]) => ({
       name,
       value,
-      percentage: totalValue > 0 ? (value / totalValue) * 100 : 0
+      percentage: totalValue > 0 ? (value / totalValue) * 100 : 0,
     }))
     .sort((a, b) => b.value - a.value);
 
-  if (sorted.length <= 6) return sorted;
-  const top = sorted.slice(0, 5);
-  const otherValue = sorted.slice(5).reduce((sum, item) => sum + item.value, 0);
-  return [
-    ...top,
-    {
-      name: "อื่นๆ",
-      value: otherValue,
-      percentage: totalValue > 0 ? (otherValue / totalValue) * 100 : 0
-    }
-  ];
+  return sorted;
 }
 
 function buildStatusValues(deals: Deal[], totalValue: number) {
   const values = new Map<string, number>();
   deals.forEach((deal) => {
-    const status = normalizeStatus(deal.representative.status);
+    const statuses = new Set(
+      deal.rows.map((row) => normalizeStatus(row.status)),
+    );
+    const status = statuses.size > 1 ? "หลายสถานะ" : [...statuses][0];
     values.set(status, (values.get(status) ?? 0) + deal.value);
   });
 
@@ -164,17 +242,26 @@ function buildStatusValues(deals: Deal[], totalValue: number) {
     .map(([name, value]) => ({
       name,
       value,
-      percentage: totalValue > 0 ? (value / totalValue) * 100 : 0
+      percentage: totalValue > 0 ? (value / totalValue) * 100 : 0,
     }))
     .sort((a, b) => b.value - a.value);
 }
 
 function buildMonthlyTrend(deals: Deal[]) {
-  const buckets = new Map<string, { month: string; monthLabel: string; value: number; count: number }>();
+  const buckets = new Map<
+    string,
+    { month: string; monthLabel: string; value: number; count: number }
+  >();
   deals.forEach((deal) => {
     const row = deal.representative;
+    if (!row.createdAt) return;
     const month = toMonthKey(row.createdAt || row.closedAt);
-    const current = buckets.get(month) ?? { month, monthLabel: formatThaiMonthShort(month), value: 0, count: 0 };
+    const current = buckets.get(month) ?? {
+      month,
+      monthLabel: formatThaiMonthShort(month),
+      value: 0,
+      count: 0,
+    };
     current.value += deal.value;
     current.count += 1;
     buckets.set(month, current);
@@ -184,35 +271,60 @@ function buildMonthlyTrend(deals: Deal[]) {
     .slice(-6);
 }
 
-function getAttentionItems(rows: DashboardRow[], availableFields: DashboardField[]): AttentionItem[] {
+function getAttentionItems(
+  rows: DashboardRow[],
+  availableFields: DashboardField[],
+): AttentionItem[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tracksWorkOrder = availableFields.includes("workOrder");
 
   return rows
     .map((row): AttentionItem | null => {
-      const isOverdue = row.closedAt && new Date(`${row.closedAt}T00:00:00`) < today && isOpenStatus(row.status);
-      const missingWorkOrder = tracksWorkOrder && !row.workOrder && !isClosedLost(row.status);
+      const isOverdue =
+        row.closedAt &&
+        new Date(`${row.closedAt}T00:00:00`) < today &&
+        isOpenStatus(row.status);
+      const missingWorkOrder =
+        tracksWorkOrder && !row.workOrder && !isClosedLost(row.status);
 
-      if (isOverdue) return { row, reason: `เกินกำหนดปิดการขาย ${formatThaiDateForAlert(row.closedAt)}`, severity: "risk" };
-      if (missingWorkOrder) return { row, reason: "ยังไม่มีเลข WorkOrder", severity: "attention" };
-      if (isOpenStatus(row.status)) return { row, reason: "ยังอยู่ระหว่างพิจารณา", severity: "attention" };
+      if (isOverdue)
+        return {
+          row,
+          reason: `เกินกำหนดปิดการขาย ${formatThaiDateForAlert(row.closedAt)}`,
+          severity: "risk",
+        };
+      if (missingWorkOrder)
+        return { row, reason: "ยังไม่มีเลข WorkOrder", severity: "attention" };
+      if (isOpenStatus(row.status))
+        return { row, reason: "ยังอยู่ระหว่างพิจารณา", severity: "attention" };
       return null;
     })
     .filter((item): item is AttentionItem => item !== null)
-    .sort((a, b) => Number(a.severity === "risk") - Number(b.severity === "risk"))
+    .sort(
+      (a, b) => Number(a.severity === "risk") - Number(b.severity === "risk"),
+    )
     .reverse();
 }
 
-function buildMonthlyComparisons(rows: DashboardRow[], availableFields: DashboardField[]) {
+function buildMonthlyComparisons(
+  rows: DashboardRow[],
+  availableFields: DashboardField[],
+) {
   const months = rows
     .map((row) => toMonthKey(row.createdAt))
     .filter((month) => month !== "ไม่ระบุ")
     .sort();
   const currentMonth = months.at(-1) ?? null;
   const previousMonth = currentMonth ? previousMonthKey(currentMonth) : null;
-  const current = monthlySnapshot(rows.filter((row) => toMonthKey(row.createdAt) === currentMonth), availableFields);
-  const previous = monthlySnapshot(rows.filter((row) => toMonthKey(row.createdAt) === previousMonth), availableFields);
+  const current = monthlySnapshot(
+    rows.filter((row) => toMonthKey(row.createdAt) === currentMonth),
+    availableFields,
+  );
+  const previous = monthlySnapshot(
+    rows.filter((row) => toMonthKey(row.createdAt) === previousMonth),
+    availableFields,
+  );
 
   return {
     currentMonth,
@@ -220,15 +332,27 @@ function buildMonthlyComparisons(rows: DashboardRow[], availableFields: Dashboar
     currentLabel: currentMonth ? formatThaiMonthShort(currentMonth) : "-",
     previousLabel: previousMonth ? formatThaiMonthShort(previousMonth) : "-",
     totalItems: percentageChange(current.totalItems, previous.totalItems),
-    closedWonCount: percentageChange(current.closedWonCount, previous.closedWonCount),
+    closedWonCount: percentageChange(
+      current.closedWonCount,
+      previous.closedWonCount,
+    ),
     openCount: percentageChange(current.openCount, previous.openCount),
-    closedLostCount: percentageChange(current.closedLostCount, previous.closedLostCount),
+    closedLostCount: percentageChange(
+      current.closedLostCount,
+      previous.closedLostCount,
+    ),
     totalValue: percentageChange(current.totalValue, previous.totalValue),
-    attentionCount: percentageChange(current.attentionCount, previous.attentionCount)
+    attentionCount: percentageChange(
+      current.attentionCount,
+      previous.attentionCount,
+    ),
   };
 }
 
-function monthlySnapshot(rows: DashboardRow[], availableFields: DashboardField[]) {
+function monthlySnapshot(
+  rows: DashboardRow[],
+  availableFields: DashboardField[],
+) {
   const won = rows.filter((row) => isClosedWon(row.status)).length;
   const lost = rows.filter((row) => isClosedLost(row.status)).length;
   const open = rows.filter((row) => isOpenStatus(row.status)).length;
@@ -238,7 +362,7 @@ function monthlySnapshot(rows: DashboardRow[], availableFields: DashboardField[]
     openCount: open,
     closedLostCount: lost,
     totalValue: sumDeals(groupDeals(rows)),
-    attentionCount: getAttentionItems(rows, availableFields).length
+    attentionCount: getAttentionItems(rows, availableFields).length,
   };
 }
 
@@ -255,9 +379,11 @@ function percentageChange(current: number, previous: number): number | null {
 
 function formatThaiDateForAlert(value: string | null) {
   if (!value) return "";
-  return new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "2-digit" }).format(
-    new Date(`${value}T00:00:00`)
-  );
+  return new Intl.DateTimeFormat("th-TH", {
+    day: "numeric",
+    month: "short",
+    year: "2-digit",
+  }).format(new Date(`${value}T00:00:00`));
 }
 
 function countBy(rows: DashboardRow[], getKey: (row: DashboardRow) => string) {
@@ -303,4 +429,35 @@ export function isClosedLost(status: string) {
 
 export function isOpenStatus(status: string) {
   return !isClosedWon(status) && !isClosedLost(status);
+}
+
+export function matchesAttention(
+  row: DashboardRow,
+  mode: string,
+  allRows: DashboardRow[],
+) {
+  if (mode === "open") return isOpenStatus(row.status);
+  if (mode === "overdue")
+    return Boolean(
+      row.closedAt &&
+      row.closedAt <
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Bangkok",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date()) &&
+      isOpenStatus(row.status),
+    );
+  if (mode === "quality")
+    return (
+      !row.createdAt ||
+      !row.company ||
+      groupDeals(allRows).some(
+        (deal) =>
+          deal.rows.includes(row) &&
+          new Set(deal.rows.map((item) => item.totalValue)).size > 1,
+      )
+    );
+  return true;
 }

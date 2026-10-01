@@ -17,6 +17,15 @@ Next.js interactive dashboard connected directly to a Google Sheet published as 
 - Excel `.xlsx` and print-ready PDF exports based on the current filters and sorting.
 - Loading state and friendly connection errors.
 - Flexible Thai/English column mapping.
+- Click KPIs, chart bars, donut legends, months, companies, and loss reasons to cross-filter.
+- Share filters in the URL and save favorite views locally on each browser.
+- Equal-period comparison, zero-filled monthly trends, value/count switch, and data-quality alerts.
+- Refresh keeps filters, sorting, pagination, and open details; hidden tabs pause polling.
+- Excel contains row data, canonical deduplicated deals, and filter conditions.
+
+The current schema supports `วันที่เสนอราคา`, `สถานะติดตามงาน`, `ประเภทใบเสนอราคา`, `มูลค่า (บาท)`, and `เหตุผล Closed Lost`, along with legacy aliases. Configure aliases in `lib/column-map.ts`. Missing optional columns are hidden. Rows without valid dates remain in the table but do not enter time charts. Two-digit slash-date years are interpreted as Thai Buddhist years.
+
+Money groups are built **before filtering**. A matching row selects the full group's value once; conflicting values use the maximum and are flagged. Without WorkOrder, both company and date are required to group; incomplete keys remain separate rows. Monetary status/category charts assign mixed groups to dedicated buckets so their sums match the KPI. Row totals and monetary group totals intentionally have different counting units.
 
 ## Data Flow
 
@@ -41,16 +50,16 @@ No API key is needed. The Google Sheet must remain published to the web as CSV.
 
 ```bash
 npm install
-npm run dev
+npm run dev -- --port 3002
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3002` without affecting other projects on 3000/3001.
 
 For a production-style local run:
 
 ```bash
 npm run build
-npm run start
+npm run start -- --port 3002
 ```
 
 ## Deploy on Vercel

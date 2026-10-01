@@ -1,4 +1,6 @@
 import { parse } from "csv-parse/sync";
+import { createHash } from "node:crypto";
+import { groupDeals } from "@/lib/metrics";
 import { normalizeRows } from "@/lib/column-map";
 import { getSamplePayload } from "@/lib/sample-data";
 import type { SheetPayload } from "@/lib/types";
@@ -7,15 +9,17 @@ const DEFAULT_PUBLISHED_CSV_URL =
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vRjx5F5-r5azSXZ_I8hiy_YTezFfD1uS8bwBjf88wgQQdUlUldUGcG6TlrXyWrvAtIcQRWO9l0FrykJ/pub?output=csv";
 
 export async function fetchSheetPayload(): Promise<SheetPayload> {
-  const publishedCsvUrl = process.env.GOOGLE_SHEET_CSV_URL || DEFAULT_PUBLISHED_CSV_URL;
+  const publishedCsvUrl =
+    process.env.GOOGLE_SHEET_CSV_URL || DEFAULT_PUBLISHED_CSV_URL;
   const allowSample = process.env.ALLOW_SAMPLE_DATA === "true";
 
   try {
     const response = await fetch(withCacheBuster(publishedCsvUrl), {
       cache: "no-store",
+      signal: AbortSignal.timeout(20000),
       headers: {
-        Accept: "text/csv,text/plain;q=0.9,*/*;q=0.8"
-      }
+        Accept: "text/csv,text/plain;q=0.9,*/*;q=0.8",
+      },
     });
 
     if (!response.ok) {
@@ -35,16 +39,26 @@ export async function fetchSheetPayload(): Promise<SheetPayload> {
       sheetName: process.env.GOOGLE_SHEET_NAME || "Published Google Sheet",
       range: `CSV · ${headers.length} columns · ${rows.length} rows`,
       updatedAt: new Date().toISOString(),
+      fingerprint: createHash("sha256")
+        .update(JSON.stringify({ headers, rows }))
+        .digest("hex"),
+      quality: {
+        missingDates: rows.filter((row) => !row.createdAt).length,
+        missingCompanies: rows.filter((row) => !row.company).length,
+        conflictingGroups: groupDeals(rows).filter(
+          (deal) => new Set(deal.rows.map((row) => row.totalValue)).size > 1,
+        ).length,
+      },
       source: "published-csv",
       headers,
       availableFields,
-      rows
+      rows,
     };
   } catch (error) {
     if (allowSample) return getSamplePayload();
     const detail = error instanceof Error ? error.message : "ไม่ทราบสาเหตุ";
     throw new Error(
-      `ดึงข้อมูลจาก Published Google Sheets CSV ไม่สำเร็จ: ${detail}. ตรวจว่าไฟล์ยัง Publish to web และ URL เปิดได้โดยไม่ต้อง Login`
+      `ดึงข้อมูลจาก Published Google Sheets CSV ไม่สำเร็จ: ${detail}. ตรวจว่าไฟล์ยัง Publish to web และ URL เปิดได้โดยไม่ต้อง Login`,
     );
   }
 }
@@ -55,7 +69,7 @@ function parseCsv(csv: string): string[][] {
     columns: false,
     relax_column_count: true,
     skip_empty_lines: true,
-    trim: false
+    trim: false,
   }) as string[][];
 }
 

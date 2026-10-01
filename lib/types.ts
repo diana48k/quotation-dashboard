@@ -22,6 +22,7 @@ export type DashboardRow = {
   status: string;
   owner: string;
   note: string;
+  lossReason: string;
   attachment: string;
   lastUpdated: string;
   createdAt: string | null;
@@ -29,13 +30,22 @@ export type DashboardRow = {
   lastUpdatedAt: string | null;
 };
 
-export type DashboardField = Exclude<keyof DashboardRow, "rowNumber" | "createdAt" | "closedAt" | "lastUpdatedAt">;
+export type DashboardField = Exclude<
+  keyof DashboardRow,
+  "rowNumber" | "createdAt" | "closedAt" | "lastUpdatedAt"
+>;
 
 export type SheetPayload = {
   spreadsheetId: string;
   sheetName: string;
   range: string;
   updatedAt: string;
+  fingerprint?: string;
+  quality?: {
+    missingDates: number;
+    conflictingGroups: number;
+    missingCompanies: number;
+  };
   source: "published-csv" | "google-sheets" | "sample";
   headers: string[];
   availableFields: DashboardField[];
@@ -50,6 +60,8 @@ export type FilterState = {
   owner: string;
   dateFrom: string;
   dateTo: string;
+  lossReason?: string;
+  attention?: string;
 };
 
 export type SortKey =
@@ -58,6 +70,7 @@ export type SortKey =
   | "createdAt"
   | "closedAt"
   | "itemName"
+  | "productName"
   | "category"
   | "quantity"
   | "totalValue"

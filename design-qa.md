@@ -1,42 +1,48 @@
 # Design QA
 
-## Scope
+Status: **passed**
+Verified: 2026-10-01, local production server on port 3002.
 
-- Reference: `C:\Users\KHatavut.F\.codex\generated_images\019e93e0-4b32-73d0-8034-a494de500e4e\ig_0ff6e0015d7c7944016a21c3397d1081918e11a3c913273d28.png`
-- Implementation: `C:\Users\KHatavut.F\Documents\Codex\2026-06-05\files-mentioned-by-the-user-design\work\quotation-dashboard\design-qa-desktop-aligned.png`
-- Side-by-side comparison: `C:\Users\KHatavut.F\Documents\Codex\2026-06-05\files-mentioned-by-the-user-design\work\quotation-dashboard\design-qa-comparison.png`
-- Tablet capture: `C:\Users\KHatavut.F\Documents\Codex\2026-06-05\files-mentioned-by-the-user-design\work\quotation-dashboard\design-qa-tablet.png`
-- Desktop comparison size: 1536 x 1024 pixels for both images. The browser content capture was aligned to the reference canvas without scaling.
-- Tablet viewport: 1024 x 768 CSS pixels.
-- State: live Published CSV, 622 rows, no active filters.
+## Source and Accuracy
 
-## Comparison History
+- Real Published CSV: 571 nonblank rows; no fixed row-count assumption in the application.
+- Deduplicated value: THB 2,060,100. Closed Won 399, Qualification 138, Closed Lost 34.
+- Quality: one undated row, zero missing companies, 19 groups with conflicting repeated values.
+- Maximum conflicting value is used as requested; alerts expose affected rows.
+- Legacy/new headers, CE/BE dates, invalid dates, missing optional fields, blank rows, WO grouping, company/date grouping, incomplete keys, mixed buckets and filtered canonical totals passed assertions.
+- Status/category monetary sums equal the KPI. Filtered Excel serialized and reopened successfully with three sheets and the correct deduplicated subtotal.
+- Undated rows remain in tables and are excluded from time analysis.
 
-### Iteration 1
+## Visual Checks
 
-- P2: The 12-month line chart was too dense at the target viewport. Reduced it to the latest six months while retaining Thai abbreviated month labels, point values, and tooltips.
-- P2: Latest items could be ordered by a future closed date. Changed the order to use last updated, created date, then closed date.
-- P2: Missing Sheet columns produced placeholder filters, columns, and WorkOrder alerts. Added `availableFields` from the real CSV headers and made those surfaces data-aware.
-- P2: The desktop composition was too loose. Reworked the page into the reference's dense six-KPI, one-line filter, three-chart, alert, latest-items, and table layout.
+The supplied TigerSoft reference image was reviewed using the corrected Windows path.
 
-### Final Review
+- TigerSoft brand, compact navigation, six KPI cards, white/gray surfaces, blue actions, red active states.
+- Actual data replaces reference placeholders; no fake Admin, owner or growth rate.
+- Bar values, donut values/percentages and Thai month point labels are visible.
+- Checks at 1440x1000, 1536x960, 1024x900 and 390x844: no document horizontal overflow; only the table scrolls horizontally.
+- Reference hierarchy retained, with added company/loss insights and alerts in separate bands. This is a functional adaptation, not a pixel-identical image copy.
+- Normal and reduced-motion chart rendering verified. Keyboard focus stays in Modal, Escape closes it and focus is restored.
 
-- P0: none.
-- P1: none.
-- P2: none.
-- P3: The reference's TIGER GROUP label remains TIGER SOFT by product requirement.
-- P3: The reference's fake Admin profile is intentionally omitted.
-- P3: The category donut automatically becomes value by status because the live Sheet has no category column.
+Screenshots in `output/playwright`: `dashboard-1440.png`, `dashboard-1536.png`, `dashboard-1024.png`, `dashboard-390.png`, `reduced-motion.png`, `production-live.png`.
 
-## Functional QA
+## Interaction and Reliability
 
-- Google Sheets Published CSV: 622 rows loaded; automatic refresh observed through updated fetch timestamps.
-- Search, company filter, status filter, date range, reset, table sort, pagination, and detail modal: passed.
-- Sidebar: passed at 298 px expanded and 72 px collapsed.
-- Excel/PDF export actions: present and wired to the current filtered rows.
-- Desktop and tablet: no document-level horizontal overflow.
-- Browser console: no warnings or errors.
+Browser automation passed KPI toggle, bar selection, donut filtering/KPI value reconciliation, month selection, company drill-down, search, URL restoration, saved views, pagination retained on refresh and sort, Excel download/reopen, PDF row count and blocked-popup feedback.
 
-## Result
+Mocked fetch tests passed: slow response, failed refresh retaining rows, 25s client timeout, overlap guard, 45s polling, hidden-tab pause/resume, open Modal updating from refreshed rows and showing a deletion warning. Mocked edits never changed Google Sheets. The test deletes one row from its local response, so its final simulated count is 570, not the live count.
 
-final result: passed
+Live production page: 571 rows, chart labels rendered, no browser console or uncaught script errors. Intentional 503 errors in fault-injection tests are expected.
+
+## Build Gates
+
+- `npm run lint`: passed.
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- `npx --yes --package tsx tsx tests/validation.ts`: passed.
+- `node tests/browser-qa.cjs` with Playwright configured: passed.
+- `git diff --check`: passed.
+
+## Remaining Limits
+
+Published CSV is public, read-only and subject to Google's publishing delay. Polling does not guarantee immediate synchronization. Growth badges show a dash when the base is zero; default badges compare month-to-date while default totals cover all rows. Preferences and saved views are browser-local. Login, authorization, private storage, write-back, historical snapshots, LINE Messaging API and Vercel deployment are future phases.
